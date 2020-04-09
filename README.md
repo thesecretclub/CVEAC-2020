@@ -5,7 +5,7 @@ This bypasses the integrity checks from EasyAntiCheat.sys, letting you effective
 
 ## How does EAC's integrity check work?
 
-Read the full write-up here: https://secret.club/
+Read the full write-up here: https://secret.club/2020/04/08/eac_integrity_check_bypass.html
 
 
 
