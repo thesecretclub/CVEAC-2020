@@ -35,7 +35,7 @@ uintptr_t eac::get_integrity_check_address_old()
 		const auto* punwind_info = reinterpret_cast< PUNWIND_INFO >( base + pfunc_table[ i ].u.UnwindInfoAddress );
 
 		if ( punwind_info->Version == 1 && punwind_info->PrologSize == 0xF && punwind_info->CntUnwindCodes == 6 &&
-			 punwind_info->UnwindCodes[ 2 ].u.Value == 0x540A )
+	             punwind_info->UnwindCodes[ 2 ].u.Value == 0x540A )
 		{
 			const auto wrapper_address = base + pfunc_table[ i ].BeginAddress;
 
@@ -76,7 +76,7 @@ uintptr_t eac::get_integrity_check_address_new()
 		const auto* punwind_info = reinterpret_cast< PUNWIND_INFO >( base + pfunc_table[ i ].u.UnwindInfoAddress );
 
 		if ( punwind_info->Version == 1 && punwind_info->PrologSize == 0x18 && punwind_info->CntUnwindCodes == 0x0A &&
-			 punwind_info->UnwindCodes[ 1 ].u.Value == 0x000B )
+		     punwind_info->UnwindCodes[ 1 ].u.Value == 0x000B )
 		{
 			const auto previous_unwind_info = reinterpret_cast< PUNWIND_INFO >( base + pfunc_table[ i - 1 ].u.UnwindInfoAddress );
 
@@ -131,7 +131,7 @@ uintptr_t eac::get_csrss_check_address()
 		const auto* punwind_info = reinterpret_cast< PUNWIND_INFO >( base + pfunc_table[ i ].u.UnwindInfoAddress );
 
 		if ( punwind_info->Version == 1 && punwind_info->PrologSize == 0xA && punwind_info->CntUnwindCodes == 4 &&
-			 punwind_info->UnwindCodes[ 1 ].u.Value == 0x000B )
+		     punwind_info->UnwindCodes[ 1 ].u.Value == 0x000B )
 		{
 			pwrapper = base + pfunc_table[ i ].BeginAddress;
 			break;
@@ -162,10 +162,10 @@ bool eac::disable_integrity_check()
 
 	// Make use of a disassembler to find the correct place to patch
 	while ( nmd_x86_decode_buffer( reinterpret_cast< const void* >( integrity_check_addr ),
-		                           0x1000,
-		                           &instruction,
-		                           NMD_X86_MODE_64,
-		                           NMD_X86_DECODER_FLAGS_ALL ) )
+		                       0x1000,
+		                       &instruction,
+		                       NMD_X86_MODE_64,
+		                       NMD_X86_DECODER_FLAGS_ALL ) )
 	{
 		// Break on ret
 		if ( instruction.id == NMD_X86_INSTRUCTION_RET )
@@ -175,7 +175,7 @@ bool eac::disable_integrity_check()
 		{
 			// Follow only JMP and JNE
 			if ( instruction.id == NMD_X86_INSTRUCTION_JNE || instruction.id == NMD_X86_INSTRUCTION_JMP )
-				integrity_check_addr += static_cast< int32_t >( instruction.immediate ) + instruction.length;
+			     integrity_check_addr += static_cast< int32_t >( instruction.immediate ) + instruction.length;
 
 			else
 			{
@@ -183,8 +183,8 @@ bool eac::disable_integrity_check()
 				{
 					// Format current instruction
 					nmd_x86_format_instruction( &instruction, instruction_string, 0, NMD_X86_FORMAT_FLAGS_HEX | 
-																					 NMD_X86_FORMAT_FLAGS_POINTER_SIZE | 
-																					 NMD_X86_FORMAT_FLAGS_COMMA_SPACES );
+								    NMD_X86_FORMAT_FLAGS_POINTER_SIZE | 
+								    NMD_X86_FORMAT_FLAGS_COMMA_SPACES );
 
 
 					// movzx xxx, word ptr [yyy+6]
@@ -202,7 +202,7 @@ bool eac::disable_integrity_check()
 		{
 			// Follow only JMP and JE
 			if ( instruction.id == NMD_X86_INSTRUCTION_JE || instruction.id == NMD_X86_INSTRUCTION_JMP )
-				integrity_check_addr += static_cast< int32_t >( instruction.immediate ) + instruction.length;
+			     integrity_check_addr += static_cast< int32_t >( instruction.immediate ) + instruction.length;
 
 			else
 			{
@@ -211,9 +211,9 @@ bool eac::disable_integrity_check()
 
 				// Find mov al, reg
 				if ( instruction.id == NMD_X86_INSTRUCTION_MOV && 
-					 operands[ 0 ].type == NMD_X86_OPERAND_TYPE_REGISTER && 
-					 operands[ 0 ].fields.reg == NMD_X86_REG_AL &&
-					 operands[ 1 ].type == NMD_X86_OPERAND_TYPE_REGISTER )
+				     operands[ 0 ].type == NMD_X86_OPERAND_TYPE_REGISTER && 
+				     operands[ 0 ].fields.reg == NMD_X86_REG_AL &&
+				     operands[ 1 ].type == NMD_X86_OPERAND_TYPE_REGISTER )
 				{ 
 					// We're only interested in the last result
 					patch_target_address = integrity_check_addr;
