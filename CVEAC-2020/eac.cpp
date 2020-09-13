@@ -3,8 +3,14 @@
 #include "pe.hpp"
 #include "utils.hpp"
 
-// Finds the address of the integrity check function
-uintptr_t eac::get_integrity_check_address()
+// Include single-header disassembler
+#define NMD_ASSEMBLY_IMPLEMENTATION
+#define NMD_ASSEMBLY_NO_INCLUDES
+#include "nmd_assembly.h"
+
+
+// Finds the address of the integrity check function in older EAC binaries
+uintptr_t eac::get_integrity_check_address_old()
 {
 	const auto* pldr_entry = kernel_modules::get_ldr_data_by_name( L"EasyAntiCheat.sys" );
 
@@ -12,7 +18,7 @@ uintptr_t eac::get_integrity_check_address()
 		return 0;
 
 	// Getting exception information from data directories
-	const auto  base           = reinterpret_cast< uintptr_t >( pldr_entry->DllBase );
+	const auto  base = reinterpret_cast< uintptr_t >( pldr_entry->DllBase );
 	const auto* pexception_dir = pe::get_data_directory( base, IMAGE_DIRECTORY_ENTRY_EXCEPTION );
 
 	if ( !pexception_dir || !pexception_dir->VirtualAddress )
@@ -21,7 +27,7 @@ uintptr_t eac::get_integrity_check_address()
 	const auto* pfunc_table = reinterpret_cast< PRUNTIME_FUNCTION >( base + pexception_dir->VirtualAddress );
 	const auto  entry_count = static_cast< DWORD >( pexception_dir->Size / sizeof( RUNTIME_FUNCTION ) );
 
-	uintptr_t pwrapper = 0;
+	uintptr_t function_address = 0;
 
 	// Scan .pdata section. Easier to do that because this function is obfuscated
 	for ( DWORD i = 0; i < entry_count; ++i )
@@ -31,12 +37,72 @@ uintptr_t eac::get_integrity_check_address()
 		if ( punwind_info->Version == 1 && punwind_info->PrologSize == 0xF && punwind_info->CntUnwindCodes == 6 &&
 			 punwind_info->UnwindCodes[ 2 ].u.Value == 0x540A )
 		{
-			pwrapper = base + pfunc_table[ i ].BeginAddress;
-			break;
+			const auto wrapper_address = base + pfunc_table[ i ].BeginAddress;
+
+			// Must be a JMP instruction. Indicates this is the correct wrapper
+			if ( *reinterpret_cast< BYTE* >( wrapper_address ) == 0xE9 )
+			{
+				function_address = wrapper_address + *reinterpret_cast< INT32* >( wrapper_address + 0x1 ) + 0x5;
+				break;
+			}
 		}
 	}
 
-	return pwrapper ? ( pwrapper + *reinterpret_cast< INT32* >( pwrapper + 0x1 ) + 0x5 ) : 0;
+	return function_address;
+}
+
+uintptr_t eac::get_integrity_check_address_new()
+{
+	const auto* pldr_entry = kernel_modules::get_ldr_data_by_name( L"EasyAntiCheat.sys" );
+
+	if ( !pldr_entry )
+		return 0;
+
+	// Getting exception information from data directories
+	const auto  base = reinterpret_cast< uintptr_t >( pldr_entry->DllBase );
+	const auto* pexception_dir = pe::get_data_directory( base, IMAGE_DIRECTORY_ENTRY_EXCEPTION );
+
+	if ( !pexception_dir || !pexception_dir->VirtualAddress )
+		return 0;
+
+	const auto* pfunc_table = reinterpret_cast< PRUNTIME_FUNCTION >( base + pexception_dir->VirtualAddress );
+	const auto  entry_count = static_cast< DWORD >( pexception_dir->Size / sizeof( RUNTIME_FUNCTION ) );
+
+	uintptr_t function_address = 0;
+
+	// Scan .pdata section. Easier to do that because this function is obfuscated
+	for ( DWORD i = 0; i < entry_count; ++i )
+	{
+		const auto* punwind_info = reinterpret_cast< PUNWIND_INFO >( base + pfunc_table[ i ].u.UnwindInfoAddress );
+
+		if ( punwind_info->Version == 1 && punwind_info->PrologSize == 0x18 && punwind_info->CntUnwindCodes == 0x0A &&
+			 punwind_info->UnwindCodes[ 1 ].u.Value == 0x000B )
+		{
+			const auto previous_unwind_info = reinterpret_cast< PUNWIND_INFO >( base + pfunc_table[ i - 1 ].u.UnwindInfoAddress );
+
+			if ( previous_unwind_info->CntUnwindCodes != 0x8 || previous_unwind_info->UnwindCodes[ 1 ].u.Value != 0x000F )
+				continue;
+
+			const auto wrapper_address = base + pfunc_table[ i ].BeginAddress;
+
+			// Must be a JMP instruction. Indicates this is the correct wrapper
+			if ( *reinterpret_cast< BYTE* >( wrapper_address ) == 0xE9 )
+			{
+				function_address = wrapper_address + *reinterpret_cast< INT32* >( wrapper_address + 0x1 ) + 0x5;
+				break;
+			}
+		}
+	}
+
+	return function_address;
+}
+
+// Finds the integrity check address
+uintptr_t eac::get_integrity_check_address()
+{
+	const auto address_old = get_integrity_check_address_old();
+
+	return address_old ? address_old : get_integrity_check_address_new();
 }
 
 // Find the address of the function that checks if the current process is csrss.exe. Patching it gives you the ability to open handles without any problems
@@ -77,77 +143,94 @@ uintptr_t eac::get_csrss_check_address()
 		   ( pwrapper + *reinterpret_cast< INT32* >( pwrapper + 0x1 ) + 0x5 ) : 0;
 }
 
-// This function lets you patch any function from EasyAntiCheat.sys without getting caught by its integrity checks
-bool eac::safe_patch( uintptr_t address, void* buffer, size_t size )
+// This function disables the integrity check by patching the integrity check function
+bool eac::disable_integrity_check()
 {
-	static uintptr_t pdriver_copy_base = 0;
+	// Get the address of the integrity check function
+	auto integrity_check_addr = eac::get_integrity_check_address();
 
-	if ( !address || !size )
+	if ( !integrity_check_addr )
 		return false;
 
-	// Get EasyAntiCheat.sys information
-	const auto* pldr_entry = kernel_modules::get_ldr_data_by_name( L"EasyAntiCheat.sys" );
+	uintptr_t patch_target_address = 0;
+	size_t    patch_length         = 0;
 
-	if ( !pldr_entry )
-		return false;
+	nmd_x86_instruction instruction{ };
+	char instruction_string[ NMD_X86_MAXIMUM_INSTRUCTION_STRING_LENGTH ]{ };
 
-	const auto module_base = reinterpret_cast< uintptr_t >( pldr_entry->DllBase );
-	const auto module_size = pldr_entry->SizeOfImage;
+	bool sec_count_check_found = false;
 
-	// Scan all big pools to find EAC's driver copy
-	if ( !pdriver_copy_base )
+	// Make use of a disassembler to find the correct place to patch
+	while ( nmd_x86_decode_buffer( reinterpret_cast< const void* >( integrity_check_addr ),
+		                           0x1000,
+		                           &instruction,
+		                           NMD_X86_MODE_64,
+		                           NMD_X86_DECODER_FLAGS_ALL ) )
 	{
-		const auto pbigpool_info = utils::query_bigpool_information();
+		// Break on ret
+		if ( instruction.id == NMD_X86_INSTRUCTION_RET )
+			break;
 
-		if ( !pbigpool_info )
-			return false;
-
-		const auto* pool_entries = pbigpool_info->AllocatedInfo;
-
-		for ( ULONG i = 0; i < pbigpool_info->Count; ++i )
+		else if ( !sec_count_check_found )
 		{
-			const auto pool_size = pool_entries[ i ].SizeInBytes;
-			const auto pool_base = reinterpret_cast< uintptr_t >( pool_entries[ i ].VirtualAddress );
+			// Follow only JMP and JNE
+			if ( instruction.id == NMD_X86_INSTRUCTION_JNE || instruction.id == NMD_X86_INSTRUCTION_JMP )
+				integrity_check_addr += static_cast< int32_t >( instruction.immediate ) + instruction.length;
 
-			// The pool allocated by EAC is 0x1000 bytes greater than the module size
-			if ( pool_entries[ i ].NonPaged && pool_size == ( module_size + 0x1000 ) )
+			else
 			{
-				for ( USHORT j = 0; j < 0x1000; ++j )
+				if ( instruction.id == NMD_X86_INSTRUCTION_MOVZX )
 				{
-					// MZ signature, this was definitely allocated by EAC	
-					if ( *reinterpret_cast< WORD* >( pool_base + j ) == IMAGE_DOS_SIGNATURE )
-					{
-						pdriver_copy_base = pool_base + j;
-						break;
-					}
+					// Format current instruction
+					nmd_x86_format_instruction( &instruction, instruction_string, 0, NMD_X86_FORMAT_FLAGS_HEX | 
+																					 NMD_X86_FORMAT_FLAGS_POINTER_SIZE | 
+																					 NMD_X86_FORMAT_FLAGS_COMMA_SPACES );
+
+
+					// movzx xxx, word ptr [yyy+6]
+					if ( strstr( instruction_string, "+6]" ) )
+						sec_count_check_found = true;
 				}
 
-				if ( pdriver_copy_base )
-					break;
+				// Go to next instruction
+				integrity_check_addr += instruction.length;
 			}
 		}
 
-		ExFreePoolWithTag( pbigpool_info, 'bCoP' );
+		// Target register found. Find the following instruction: "mov al, reg"
+		else
+		{
+			// Follow only JMP and JE
+			if ( instruction.id == NMD_X86_INSTRUCTION_JE || instruction.id == NMD_X86_INSTRUCTION_JMP )
+				integrity_check_addr += static_cast< int32_t >( instruction.immediate ) + instruction.length;
 
-		if ( !pdriver_copy_base )
-			return false;
+			else
+			{
+				// Get instruction operands
+				const auto& operands = instruction.operands;
+
+				// Find mov al, reg
+				if ( instruction.id == NMD_X86_INSTRUCTION_MOV && 
+					 operands[ 0 ].type == NMD_X86_OPERAND_TYPE_REGISTER && 
+					 operands[ 0 ].fields.reg == NMD_X86_REG_AL &&
+					 operands[ 1 ].type == NMD_X86_OPERAND_TYPE_REGISTER )
+				{ 
+					// We're only interested in the last result
+					patch_target_address = integrity_check_addr;
+					patch_length         = instruction.length;
+				}
+
+				// Go to next instruction
+				integrity_check_addr += instruction.length;
+			}
+		}
 	}
 
-	const auto physical_address = MmGetPhysicalAddress( reinterpret_cast< PVOID >( address ) );
+	unsigned char mov_al_1[] =
+	{
+		0xB0, 0x01, // mov al, 1
+		0x90        // nop
+	};
 
-	if ( !physical_address.QuadPart )
-		return false;
-
-	const auto pmapped_mem = MmMapIoSpaceEx( physical_address, size, PAGE_READWRITE );
-
-	if ( !pmapped_mem )
-		return false;
-
-	// Make patches to EAC.sys module and its copy in order to bypass the integrity checks
-	memcpy( pmapped_mem, buffer, size );
-	memcpy( reinterpret_cast< void* >( pdriver_copy_base + ( address - module_base ) ), buffer, size );
-
-	MmUnmapIoSpace( pmapped_mem, size );
-
-	return true;
-}
+	return patch_target_address ? utils::patch( patch_target_address, mov_al_1, patch_length ) : false;
+ }

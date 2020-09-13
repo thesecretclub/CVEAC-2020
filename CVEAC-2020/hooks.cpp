@@ -33,19 +33,14 @@ int hooks::hk_func( void* dummy )
 
 		// Disable integrity check from EAC.sys
 		if ( !integrity_check_disabled )
-		{
-			const auto pintegrity_check_address = eac::get_integrity_check_address();
-
-			if ( eac::safe_patch( pintegrity_check_address, return_true_buf, sizeof( return_true_buf ) ) )
-				integrity_check_disabled = true;
-		}
+			integrity_check_disabled = eac::disable_integrity_check();
 
 		else
 		{
 			const auto pcsrss_check = eac::get_csrss_check_address();
 
-			// You don't need to call the safe_patch function after disabling their integrity check, just using it to make this PoC easier to understand
-			if ( eac::safe_patch( pcsrss_check, return_true_buf, sizeof( return_true_buf ) ) )
+			// Patch csrss check so we can open handles to the protected game process
+			if ( utils::patch( pcsrss_check, return_true_buf, sizeof( return_true_buf ) ) )
 				*p_func = o_func; // Restore original function
 		}
 	}

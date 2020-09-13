@@ -9,9 +9,8 @@ NTSTATUS DriverEntry( PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath 
 	UNREFERENCED_PARAMETER( RegistryPath );
 
 	kernel_modules::PsLoadedModuleList = reinterpret_cast< PLIST_ENTRY >( utils::get_kernel_export( L"PsLoadedModuleList" ) );
-	utils::ZwQuerySystemInformation    = reinterpret_cast< utils::f_ZwQuerySystemInformation >( utils::get_kernel_export( L"ZwQuerySystemInformation" ) );
 
-	if ( !kernel_modules::PsLoadedModuleList || !utils::ZwQuerySystemInformation )
+	if ( !kernel_modules::PsLoadedModuleList )
 		return STATUS_UNSUCCESSFUL;
 
 	hooks::p_func = hooks::find_hook_ptr();

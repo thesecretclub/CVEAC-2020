@@ -12,3 +12,9 @@ Read the full write-up here: https://secret.club/2020/04/08/eac_integrity_check_
 ## To-do
 
 Modify this project to suit your own needs.
+
+
+
+## Third-party libs that were used
+
+* nmd (single-header disassembler): https://github.com/Nomade040/nmd

@@ -163,6 +163,7 @@
     <ClInclude Include="eac.hpp" />
     <ClInclude Include="hooks.hpp" />
     <ClInclude Include="kernel_modules.hpp" />
+    <ClInclude Include="nmd_assembly.h" />
     <ClInclude Include="pe.hpp" />
     <ClInclude Include="utils.hpp" />
   </ItemGroup>
